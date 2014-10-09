@@ -1,8 +1,7 @@
 <j:jelly xmlns:j="jelly:core" xmlns:st="jelly:stapler"
          xmlns:l="/lib/layout">
-	<l:layout title="Main layout">
-		<l:breadcrumb title="Gatling" href="../gatling"/>
-		<l:breadcrumb title="${it.simulationName}" href="."/>
+	<l:layout title="Build #${it.build.number} : ${simName}">
+		<l:breadcrumb title="${simName}" href="."/>
 		<l:side-panel>
 			<st:include it="${it.build}" page="sidepanel.jelly"/>
 		</l:side-panel>

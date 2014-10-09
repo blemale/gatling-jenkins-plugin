@@ -15,7 +15,6 @@
  */
 package com.excilys.ebi.gatling.jenkins;
 
-import com.excilys.ebi.gatling.jenkins.model.Simulation;
 import hudson.Extension;
 import hudson.FilePath;
 import hudson.Launcher;
@@ -23,7 +22,6 @@ import hudson.model.AbstractBuild;
 import hudson.model.AbstractProject;
 import hudson.model.Action;
 import hudson.model.BuildListener;
-import hudson.model.Result;
 import hudson.tasks.BuildStepDescriptor;
 import hudson.tasks.BuildStepMonitor;
 import hudson.tasks.Publisher;
@@ -32,44 +30,53 @@ import org.kohsuke.stapler.DataBoundConstructor;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.PrintStream;
+import java.util.ArrayList;
+import java.util.List;
 
+@SuppressWarnings("unchecked")
 public class GatlingPublisher extends Recorder {
 
-	private final Simulation simulation;
+	private final Boolean enabled;
+    private AbstractBuild<?, ?> build;
+	private PrintStream logger;
+
+
+	@DataBoundConstructor
+	public GatlingPublisher(Boolean enabled) {
+		this.enabled = enabled;
+	}
 
 	@Override
 	public boolean perform(AbstractBuild<?, ?> build, Launcher launcher, BuildListener listener) throws InterruptedException, IOException {
-		GatlingBuildAction action = new GatlingBuildAction(build);
-
-		FilePath reportDirectory = saveFullReport(build.getWorkspace(), build.getRootDir(), simulation.getName());
-
-		build.addAction(new GatlingReportAction(build, simulation.getName(), reportDirectory));
-
-		SimulationReport report = new SimulationReport(reportDirectory, simulation);
-		report.readStatsFile();
-
-		if (report.isBuildFailed()) {
-			build.setResult(Result.FAILURE);
+        this.build = build;
+		logger = listener.getLogger();
+		if (enabled == null) {
+			logger.println("Cannot check Gatling simulation tracking status, reports won't be archived.");
+			logger.println("Please make sure simulation tracking is enabled in your build configuration !");
+			return true;
 		}
-		if (report.isBuildUnstable()) {
-			build.setResult(Result.UNSTABLE);
+		if (!enabled) {
+			logger.println("Simulation tracking disabled, reports were not archived.");
+			return true;
 		}
 
-		action.getRequestsReports().put(simulation.getName(), report.getGlobalReport());
-		build.addAction(action);
-		return true;
+		logger.println("Archiving Gatling reports...");
+        List<BuildSimulation> sims = saveFullReports(build.getWorkspace(), build.getRootDir());
+        if (sims.size() == 0) {
+			logger.println("No newer Gatling reports to archive.");
+			return true;
+		}
+
+        GatlingBuildAction action = new GatlingBuildAction(build, sims);
+
+        build.addAction(action);
+
+        return true;
 	}
 
-	@DataBoundConstructor
-	public GatlingPublisher(Simulation simulation) {
-		if (simulation == null)
-			this.simulation = null;
-		else
-			this.simulation = simulation;
-	}
-
-	public Simulation getSimulation() {
-		return simulation;
+	public boolean isEnabled() {
+		return enabled;
 	}
 
 	public BuildStepMonitor getRequiredMonitorService() {
@@ -81,28 +88,73 @@ public class GatlingPublisher extends Recorder {
 		return new GatlingProjectAction(project);
 	}
 
-	private FilePath saveFullReport(FilePath workspace, File rootDir, String simulationName) throws IOException, InterruptedException {
-		FilePath[] files = workspace.list("**/" + simulationName + "*/index.html");
-		FilePath parent = files[0].getParent();
+    private List<BuildSimulation> saveFullReports(FilePath workspace, File rootDir) throws IOException, InterruptedException {
+		FilePath[] files = workspace.list("**/global_stats.json");
+		List<FilePath> reportFolders = new ArrayList<FilePath>();
 
-		File allSimulationsDirectory = new File(rootDir, "simulations");
-		if (!allSimulationsDirectory.exists())
-			allSimulationsDirectory.mkdir();
+		if (files.length == 0) {
+			throw new IllegalArgumentException("Could not find a Gatling report in results folder.");
+		}
 
-		File simulationDirectory = new File(allSimulationsDirectory, simulationName);
-		simulationDirectory.mkdir();
+		// Get reports folders for all "global_stats.json" found
+		for (FilePath file : files) {
+			reportFolders.add(file.getParent().getParent());
+		}
 
-		FilePath reportDirectory = new FilePath(simulationDirectory);
+        List<FilePath> reportsToArchive = selectReports(reportFolders);
 
-		parent.copyRecursiveTo(reportDirectory);
 
-		return reportDirectory;
+        List<BuildSimulation> simsToArchive = new ArrayList<BuildSimulation>();
+
+		// If the most recent report has already been archived, there's nothing else to do
+        if (reportsToArchive.size() == 0) {
+			return simsToArchive;
+		}
+
+        File allSimulationsDirectory = new File(rootDir, "simulations");
+        if (!allSimulationsDirectory.exists())
+            allSimulationsDirectory.mkdir();
+
+        for (FilePath reportToArchive : reportsToArchive) {
+            String name = reportToArchive.getName();
+            int dashIndex = name.lastIndexOf('-');
+            String simulation = name.substring(0, dashIndex);
+            File simulationDirectory = new File(allSimulationsDirectory, name);
+            simulationDirectory.mkdir();
+
+            FilePath reportDirectory = new FilePath(simulationDirectory);
+
+            reportToArchive.copyRecursiveTo(reportDirectory);
+
+            SimulationReport report = new SimulationReport(reportDirectory, simulation);
+            report.readStatsFile();
+            BuildSimulation sim = new BuildSimulation(simulation, report.getGlobalReport(), reportDirectory);
+
+            simsToArchive.add(sim);
+        }
+
+
+		return simsToArchive;
+	}
+
+	private List<FilePath> selectReports(List<FilePath> reportFolders) throws InterruptedException, IOException {
+        long buildStartTime = build.getStartTimeInMillis();
+        List<FilePath> reportsFromThisBuild = new ArrayList<FilePath>();
+		for (FilePath reportFolder : reportFolders) {
+            long reportLastMod = reportFolder.lastModified();
+            if (reportLastMod > buildStartTime) {
+                logger.println("Adding report '" + reportFolder.getName() + "'");
+                reportsFromThisBuild.add(reportFolder);
+            }
+		}
+        return reportsFromThisBuild;
 	}
 
 	@Extension
 	public static class DescriptorImpl extends BuildStepDescriptor<Publisher> {
 
 		@Override
+		@SuppressWarnings("rawtypes")
 		public boolean isApplicable(Class<? extends AbstractProject> aClass) {
 			return true;
 		}

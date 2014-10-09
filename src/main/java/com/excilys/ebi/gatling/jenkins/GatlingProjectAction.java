@@ -21,8 +21,9 @@ import hudson.model.AbstractBuild;
 import hudson.model.AbstractProject;
 
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
+import java.util.List;
+import java.util.ArrayList;
 
 import com.excilys.ebi.gatling.jenkins.chart.Graph;
 
@@ -53,7 +54,7 @@ public class GatlingProjectAction implements Action {
 	public boolean isVisible() {
 		for (AbstractBuild<?, ?> build : getProject().getBuilds()) {
 			GatlingBuildAction gatlingBuildAction = build.getAction(GatlingBuildAction.class);
-			if (gatlingBuildAction != null && gatlingBuildAction.getRequestsReports() != null && gatlingBuildAction.getRequestsReports().size() > 0) {
+			if (gatlingBuildAction != null) {
 				return true;
 			}
 		}
@@ -100,17 +101,20 @@ public class GatlingProjectAction implements Action {
 		Map<AbstractBuild<?, ?>, List<String>> reports = new LinkedHashMap<AbstractBuild<?, ?>, List<String>>();
 
 		for (AbstractBuild<?, ?> build : project.getBuilds()) {
-			List<String> simulations = GatlingBuildAction.getReports(build);
-
-			if (!simulations.isEmpty()) {
-				reports.put(build, simulations);
-			}
+			GatlingBuildAction action = build.getAction(GatlingBuildAction.class);
+			if (action != null) {
+                List<String> simNames = new ArrayList<String>();
+                for (BuildSimulation sim : action.getSimulations()) {
+                    simNames.add(sim.getSimulationName());
+                }
+                reports.put(build, simNames);
+            }
 		}
 
 		return reports;
 	}
 
-	public String getReportURL(int build, String simulation) {
-		return new StringBuilder().append(build).append("/").append(GatlingReportAction.getURL(simulation)).toString();
+	public String getReportURL(int build, String simName) {
+		return new StringBuilder().append(build).append("/").append(URL_NAME).append("/report/").append(simName).toString();
 	}
 }

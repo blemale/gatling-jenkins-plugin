@@ -16,33 +16,28 @@
 package com.excilys.ebi.gatling.jenkins;
 
 import static com.excilys.ebi.gatling.jenkins.PluginConstants.*;
+
 import hudson.model.Action;
 import hudson.model.AbstractBuild;
 
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 public class GatlingBuildAction implements Action {
 
 	private final AbstractBuild<?, ?> build;
-	private final Map<String, RequestReport> requestsReports = new HashMap<String, RequestReport>();
+	private final List<BuildSimulation> simulations;
 
-	public GatlingBuildAction(AbstractBuild<?, ?> build) {
+	public GatlingBuildAction(AbstractBuild<?, ?> build, List<BuildSimulation> sims) {
 		this.build = build;
+		this.simulations = sims;
 	}
 
 	public AbstractBuild<?, ?> getBuild() {
 		return build;
 	}
 
-	public Map<String, RequestReport> getRequestsReports() {
-		return requestsReports;
-	}
-
-	public List<String> getReports() {
-		return getReports(build);
+	public List<BuildSimulation> getSimulations() {
+		return simulations;
 	}
 
 	public String getIconFileName() {
@@ -57,16 +52,31 @@ public class GatlingBuildAction implements Action {
 		return URL_NAME;
 	}
 
-	public static List<String> getReports(AbstractBuild<?, ?> build) {
-		List<String> reports = new ArrayList<String>();
-
-		for (GatlingReportAction action : build.getActions(GatlingReportAction.class))
-			reports.add(action.getSimulationName());
-
-		return reports;
+	/**
+	 * This method is called dynamically for any HTTP request to our plugin's
+	 * URL followed by "/report/SomeSimulationName".
+	 * 
+	 * It returns a new instance of {@link ReportRenderer}, which contains the
+	 * actual logic for rendering a report.
+	 * 
+	 * @param simName
+	 */
+	public ReportRenderer getReport(String simName) {
+		return new ReportRenderer(this, getSimulation(simName));
 	}
 
-	public String getReportURL(String simulation) {
-		return GatlingReportAction.getURL(simulation);
+	public String getReportURL(String simName) {
+		return new StringBuilder().append(URL_NAME).append("/report/").append(simName).toString();
 	}
+
+	private BuildSimulation getSimulation(String simulationName) {
+		// this isn't the most efficient implementation in the world :)
+		for (BuildSimulation sim : this.getSimulations()) {
+			if (sim.getSimulationName().equals(simulationName)) {
+				return sim;
+			}
+		}
+		return null;
+	}
+
 }
